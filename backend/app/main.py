@@ -38,11 +38,11 @@ def resume_stuck_documents():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Enforce safe pre-allocation of pgvector extension at connection layer
-    #with engine.begin() as conn:
-    #    conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector;'))
+    with engine.begin() as conn:
+        conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector;'))
     
     # Initialize unified persistence layer models cleanly
-    #models_and_crud.Base.metadata.create_all(bind=engine)
+    models_and_crud.Base.metadata.create_all(bind=engine)
     
     # Run the structural job recovery script immediately upon bootstrap completion
     resume_stuck_documents()
