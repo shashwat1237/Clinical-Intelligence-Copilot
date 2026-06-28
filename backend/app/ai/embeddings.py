@@ -2,7 +2,6 @@ import threading
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import List, Dict, Any
-from sentence_transformers import SentenceTransformer
 
 from app.db.models_and_crud import VectorChunk 
 from app.core.config import logger
@@ -18,16 +17,20 @@ class EmbeddingEngine:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super(EmbeddingEngine, cls).__new__(cls)
-                    # Removed model initialization from here to prevent Uvicorn boot blocking
         return cls._instance
 
     @property
     def model(self):
-        # Lazy load the model only when a vector operation is explicitly requested
+        # Lazy load the model ONLY when a vector operation is explicitly requested
         if self._model is None:
             with self._lock:
                 if self._model is None:
-                    logger.info("Lazy Loading: Bootstrapping all-MiniLM-L6-v2 vector weights into engine...")
+                    logger.info("Lazy Loading: Importing heavy ML libraries and bootstrapping weights...")
+                    
+                    # 🚨 CRITICAL FIX: LAZY IMPORT 🚨
+                    # Moving this massive library import here prevents it from starving the CPU during server boot
+                    from sentence_transformers import SentenceTransformer
+                    
                     self._model = SentenceTransformer('all-MiniLM-L6-v2')
         return self._model
 
