@@ -18,14 +18,24 @@ class EmbeddingEngine:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super(EmbeddingEngine, cls).__new__(cls)
-                    logger.info("Local Transformer Loading: Bootstrapping all-MiniLM-L6-v2 vector weights into engine...")
-                    cls._model = SentenceTransformer('all-MiniLM-L6-v2')
+                    # Removed model initialization from here to prevent Uvicorn boot blocking
         return cls._instance
+
+    @property
+    def model(self):
+        # Lazy load the model only when a vector operation is explicitly requested
+        if self._model is None:
+            with self._lock:
+                if self._model is None:
+                    logger.info("Lazy Loading: Bootstrapping all-MiniLM-L6-v2 vector weights into engine...")
+                    self._model = SentenceTransformer('all-MiniLM-L6-v2')
+        return self._model
 
     def generate_embedding(self, text: str) -> List[float]:
         if not text or not text.strip():
             return [0.0] * 384
-        return self._model.encode(text).tolist()
+        # Access self.model property instead of self._model directly to trigger lazy loading if needed
+        return self.model.encode(text).tolist()
 
 class VectorIndexer:
     def __init__(self, embedding_engine=None):
