@@ -16,7 +16,7 @@ class EmbeddingEngine:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    cls._instance = super(EmbeddingEngine, cls).__new__(cls)
+                    cls._instance = super(EmbeddingEngine, __new__(cls)
         return cls._instance
 
     @property
@@ -41,14 +41,13 @@ class EmbeddingEngine:
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        High-performance batch inference. 
-        Processes all chunks in a single PyTorch matrix operation instead of sequentially.
+        High-performance batch inference with strict memory limits.
         """
         if not texts:
             return []
         
-        # SentenceTransformer natively accepts lists of strings for optimized batching
-        embeddings = self.model.encode(texts)
+        # 🚨 CRITICAL FIX 1: Add batch_size=8 to prevent PyTorch from overflowing 512MB RAM
+        embeddings = self.model.encode(texts, batch_size=8)
         return embeddings.tolist()
 
 class VectorIndexer:
@@ -60,29 +59,33 @@ class VectorIndexer:
         if not chunks:
             return
 
-        # 1. Extract all text content into a single list
         texts = [chunk["content"] for chunk in chunks]
         
-        # 2. Fire the Batch Inference (Massive CPU speedup)
+        # Fire the constrained Batch Inference
         vector_embeddings = self.embedding_engine.generate_embeddings_batch(texts)
         
-        # 3. Map embeddings back to their metadata
-        new_chunks = []
-        for chunk, embedding in zip(chunks, vector_embeddings):
-            new_chunks.append(
-                VectorChunk(
-                    document_id=document_id,
-                    patient_id=patient_id,
-                    page=chunk["page"],
-                    content=chunk["content"],
-                    embedding=embedding
-                )
-            )
+        # 🚨 CRITICAL FIX 2: Chunk the SQLAlchemy inserts to prevent memory bloat during transactions
+        DB_BATCH_SIZE = 15
         
-        # 4. Bulk insert into Postgres instead of hitting the DB iteratively
-        if new_chunks:
-            db.add_all(new_chunks)
-            db.commit()
+        for i in range(0, len(chunks), DB_BATCH_SIZE):
+            chunk_batch = chunks[i:i + DB_BATCH_SIZE]
+            emb_batch = vector_embeddings[i:i + DB_BATCH_SIZE]
+            
+            new_chunks = []
+            for chunk, embedding in zip(chunk_batch, emb_batch):
+                new_chunks.append(
+                    VectorChunk(
+                        document_id=document_id,
+                        patient_id=patient_id,
+                        page=chunk["page"],
+                        content=chunk["content"],
+                        embedding=embedding
+                    )
+                )
+            
+            if new_chunks:
+                db.add_all(new_chunks)
+                db.commit()
 
     def search(self, db: Session, query: str, patient_id: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """Executes a strict cosine distance vector evaluation search scoped cleanly behind active patient boundaries."""
