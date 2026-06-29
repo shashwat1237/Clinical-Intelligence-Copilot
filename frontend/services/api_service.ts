@@ -116,5 +116,3 @@ class ApiService {
 }
 
 export const apiService = new ApiService();
-
-old code
