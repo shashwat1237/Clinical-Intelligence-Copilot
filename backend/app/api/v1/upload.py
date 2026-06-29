@@ -12,7 +12,7 @@ from app.core.config import logger
 
 router = APIRouter()
 
-@router.post("/", response_model=DocumentResponse, status_code=202)
+@router.post("", response_model=DocumentResponse, status_code=202)
 def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
