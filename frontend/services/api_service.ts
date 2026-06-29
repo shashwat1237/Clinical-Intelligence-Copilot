@@ -59,12 +59,14 @@ class ApiService {
     return this.request<PatientProfile>("/patients/profile");
   }
 
+  // FIXED: Added trailing slash
   getTimelineEvents() {
-    return this.request<TimelineEvent[]>("/timeline");
+    return this.request<TimelineEvent[]>("/timeline/");
   }
 
+  // FIXED: Added trailing slash
   getDocuments() {
-    return this.request<Document[]>("/documents");
+    return this.request<Document[]>("/documents/");
   }
 
   getDocumentEntities(id: string) {
@@ -85,7 +87,8 @@ class ApiService {
 
     const token = typeof window !== "undefined" ? localStorage.getItem("jwt_token") : null;
     
-    const res = await fetch(`${BASE_URL}/upload`, {
+    // FIXED: Added trailing slash to /upload/
+    const res = await fetch(`${BASE_URL}/upload/`, {
       method: "POST",
       cache: "no-store",
       headers: { ...(token ? { "Authorization": `Bearer ${token}` } : {}) },
@@ -102,16 +105,19 @@ class ApiService {
     return res.json();
   }
 
+  // FIXED: Added trailing slash
   sendChatMessage(message: string) {
-    return this.request<ChatMessage>("/chat", { method: "POST", body: JSON.stringify({ message }) });
+    return this.request<ChatMessage>("/chat/", { method: "POST", body: JSON.stringify({ message }) });
   }
 
+  // (No slash needed here, as it targets the specific /history endpoint)
   getChatHistory() {
     return this.request<ChatMessage[]>("/chat/history");
   }
 
+  // FIXED: Added trailing slash
   clearChatHistory() {
-    return this.request<{ detail: string }>("/chat", { method: "DELETE" });
+    return this.request<{ detail: string }>("/chat/", { method: "DELETE" });
   }
 }
 
