@@ -16,7 +16,8 @@ class EmbeddingEngine:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    cls._instance = super(EmbeddingEngine, __new__(cls))
+                    # FIX: Correctly structured super() call
+                    cls._instance = super(EmbeddingEngine, cls).__new__(cls)
         return cls._instance
 
     @property
