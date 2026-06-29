@@ -28,17 +28,28 @@ class EmbeddingEngine:
                     logger.info("Lazy Loading: Importing heavy ML libraries and bootstrapping weights...")
                     
                     # 🚨 CRITICAL FIX: LAZY IMPORT 🚨
-                    # Moving this massive library import here prevents it from starving the CPU during server boot
                     from sentence_transformers import SentenceTransformer
                     
                     self._model = SentenceTransformer('all-MiniLM-L6-v2')
         return self._model
 
     def generate_embedding(self, text: str) -> List[float]:
+        """Legacy single-string embedding method."""
         if not text or not text.strip():
             return [0.0] * 384
-        # Access self.model property instead of self._model directly to trigger lazy loading if needed
         return self.model.encode(text).tolist()
+
+    def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        High-performance batch inference. 
+        Processes all chunks in a single PyTorch matrix operation instead of sequentially.
+        """
+        if not texts:
+            return []
+        
+        # SentenceTransformer natively accepts lists of strings for optimized batching
+        embeddings = self.model.encode(texts)
+        return embeddings.tolist()
 
 class VectorIndexer:
     def __init__(self, embedding_engine=None):
@@ -46,18 +57,32 @@ class VectorIndexer:
 
     def index_document(self, db: Session, document_id: str, patient_id: str, chunks: List[dict]):
         """Generates localized dense array dimensions and inserts data records safely via pgvector mappings."""
-        for chunk in chunks:
-            vector_embedding = self.embedding_engine.generate_embedding(chunk["content"])
-           
-            new_chunk = VectorChunk(
-                document_id=document_id,
-                patient_id=patient_id,
-                page=chunk["page"],
-                content=chunk["content"],
-                embedding=vector_embedding
+        if not chunks:
+            return
+
+        # 1. Extract all text content into a single list
+        texts = [chunk["content"] for chunk in chunks]
+        
+        # 2. Fire the Batch Inference (Massive CPU speedup)
+        vector_embeddings = self.embedding_engine.generate_embeddings_batch(texts)
+        
+        # 3. Map embeddings back to their metadata
+        new_chunks = []
+        for chunk, embedding in zip(chunks, vector_embeddings):
+            new_chunks.append(
+                VectorChunk(
+                    document_id=document_id,
+                    patient_id=patient_id,
+                    page=chunk["page"],
+                    content=chunk["content"],
+                    embedding=embedding
+                )
             )
-            db.add(new_chunk)
-        db.commit()
+        
+        # 4. Bulk insert into Postgres instead of hitting the DB iteratively
+        if new_chunks:
+            db.add_all(new_chunks)
+            db.commit()
 
     def search(self, db: Session, query: str, patient_id: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """Executes a strict cosine distance vector evaluation search scoped cleanly behind active patient boundaries."""
