@@ -46,8 +46,12 @@ def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, u
 
         models_and_crud.update_document_status(db, doc_id, "EXTRACTING")
 
-        # Connect directly to extraction layer
-        extracted_data = extract_clinical_entities_from_text(full_text)
+        # 🚨 CRITICAL FIX 1: Groq Free Tier TPM Limit 🚨
+        # Truncate text to safely stay under the 12,000 Tokens Per Minute limit.
+        safe_text_payload = full_text[:25000]
+
+        # Connect directly to extraction layer using the truncated text
+        extracted_data = extract_clinical_entities_from_text(safe_text_payload)
         
         for ent in extracted_data.get("entities", []):
             models_and_crud.save_clinical_entity(db, {
@@ -79,6 +83,15 @@ def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, u
         
     except Exception as e:
         logger.error(f"Ingestion Core Pipeline Failure on {doc_id}: {str(e)}")
-        models_and_crud.update_document_status(db, doc_id, "FAILED")
+        
+        # 🚨 CRITICAL FIX 2: Rollback the broken database transaction first
+        db.rollback() 
+        
+        # Now we safely attempt to mark it as FAILED (if the document hasn't been deleted by the user)
+        try:
+            models_and_crud.update_document_status(db, doc_id, "FAILED")
+        except Exception as inner_e:
+            logger.warning(f"Could not update status (Document likely purged by user): {inner_e}")
+            
     finally:
         db.close()
