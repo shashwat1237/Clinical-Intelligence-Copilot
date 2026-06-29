@@ -55,13 +55,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Clinical Intelligence Copilot API", version="1.0.0", lifespan=lifespan)
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+# ---------------------------------------------------------
+# Replace your current CORS setup with this block
+# ---------------------------------------------------------
+
+# Read the environment variable and split it by commas so we can support multiple URLs
+frontend_env = os.getenv("FRONTEND_URL", "http://localhost:3000")
+allowed_origins = [url.strip() for url in frontend_env.split(",")]
 
 # Strict CORS routing configuration mapping
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL], 
-    allow_credentials=False,  # Set to False to fulfill strict ASGI/Starlette security isolation policies
+    allow_origins=allowed_origins, 
+    allow_credentials=False,  
     allow_methods=["*"],
     allow_headers=["*"],
 )
