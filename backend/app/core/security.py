@@ -14,10 +14,9 @@ supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVIC
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme)) -> str:
     token = credentials.credentials
     
-    # 🚨 CRITICAL FIX: The Render SSL Resilience Loop
-    # Render kills idle connections, causing "EOF occurred in violation of protocol".
-    # We wrap the official Supabase auth check in a retry block. If a stale connection dies, 
-    # the retry instantly forces the underlying HTTP client to open a fresh connection.
+    # 🚨 CRITICAL FIX: The Render SSL & HTTP/2 Resilience Loop
+    # Render kills idle connections, and rapid UI polling causes httpx HTTP/2 stream corruption.
+    # We wrap the official Supabase auth check in a robust retry block.
     max_retries = 3
     
     for attempt in range(max_retries):
@@ -32,11 +31,16 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_
         except Exception as e:
             error_msg = str(e)
             
-            # If it's a network/SSL drop, we swallow the error and retry cleanly
-            if "EOF" in error_msg or "SSL" in error_msg or "Connection" in error_msg:
+            # 🚀 FIXED: Now safely catches HTTP/2 Stream failures alongside SSL/EOF drops
+            is_recoverable_network_error = any(
+                keyword in error_msg 
+                for keyword in ["EOF", "SSL", "Connection", "Stream", "state 5", "StreamIDTooLow"]
+            )
+            
+            if is_recoverable_network_error:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Supabase connection dropped by Render. Retrying {attempt + 1}/{max_retries}...")
-                    time.sleep(0.5)  # Brief micro-pause to let the socket reset
+                    logger.warning(f"Supabase connection dropped or stream corrupted. Retrying {attempt + 1}/{max_retries}...")
+                    time.sleep(0.5)  # Brief micro-pause to let the socket and httpx state machine reset
                     continue
             
             # If we exhausted retries OR it's a true auth failure (e.g., expired token)
