@@ -1,6 +1,6 @@
 import { PatientProfile, TimelineEvent, Document, ChatMessage } from "../lib/types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "https://clinical-intelligence-copilot.onrender.com/api/v1";
+const BASE_URL = "https://clinical-intelligence-copilot-go4h.onrender.com/api/v1";
 
 class ApiService {
   private getHeaders(): HeadersInit {
