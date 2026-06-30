@@ -9,7 +9,7 @@ from app.db import models_and_crud
 
 router = APIRouter()
 
-@router.post("/", response_model=ChatMessageResponse)
+@router.post("", response_model=ChatMessageResponse)
 def chat_with_copilot(
     request: ChatRequest,
     user_id: str = Depends(get_current_user),
