@@ -1,6 +1,8 @@
 import gc
-from sqlalchemy.orm import Session
 import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.db import models_and_crud
@@ -10,7 +12,7 @@ from app.ai.embeddings import VectorIndexer
 from app.core.config import logger
 
 def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, user_id: str):
-    """Asynchronous orchestrator executing structured extraction and localized chunk vectors."""
+    """Asynchronous orchestrator executing structured extraction with OCR fallback and localized chunk vectors."""
     db: Session = SessionLocal()
     try:
         models_and_crud.update_document_status(db, doc_id, "PROCESSING")
@@ -26,7 +28,27 @@ def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, u
 
         for page_num in range(len(doc)):
             page_text = doc[page_num].get_text()
-            # CRITICAL FIX: Replaced "n" with explicit newline character "\n" to prevent cross-page word concatenation
+            
+            # ==========================================
+            # SMART OCR FALLBACK MECHANISM
+            # ==========================================
+            # If the page text is practically empty (scanned image), trigger OCR
+            if len(page_text.strip()) < 100:
+                logger.info(f"Insufficient text detected on page {page_num + 1} of document {doc_id}. Triggering OCR...")
+                try:
+                    # Render page to high-res image (matrix scales by 2x for better OCR accuracy)
+                    pix = doc[page_num].get_pixmap(matrix=fitz.Matrix(2, 2))
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    
+                    # Extract text from the image buffer
+                    ocr_text = pytesseract.image_to_string(img)
+                    page_text = ocr_text
+                    logger.info(f"OCR successfully recovered {len(page_text)} characters on page {page_num + 1}.")
+                except Exception as ocr_e:
+                    logger.warning(f"OCR fallback failed on page {page_num + 1}: {ocr_e}")
+            # ==========================================
+
+            # Replaced "n" with explicit newline character "\n" to prevent cross-page word concatenation
             full_text += page_text + "\n"
             
             words = page_text.split()
@@ -41,13 +63,12 @@ def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, u
         
         # Guardrail check against dead un-extractable scanned asset payloads
         if not full_text.strip():
-            logger.error(f"Ingestion Abrupt End: Document {doc_id} contains no extractable text headers.")
+            logger.error(f"Ingestion Abrupt End: Document {doc_id} contains no extractable text headers even after OCR.")
             models_and_crud.update_document_status(db, doc_id, "FAILED")
             return
 
         models_and_crud.update_document_status(db, doc_id, "EXTRACTING")
 
-        # 🚨 CRITICAL FIX 1: Groq Free Tier TPM Limit 🚨
         # Truncate text to safely stay under the 12,000 Tokens Per Minute limit.
         safe_text_payload = full_text[:25000]
 
@@ -75,9 +96,7 @@ def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, u
 
         models_and_crud.update_document_status(db, doc_id, "INDEXING")
 
-        # 🚨 CRITICAL FIX 3 (OOM RESOLUTION): Pre-ML Memory Purge
-        # Explicitly delete massive binary and string variables, then force the Python 
-        # Garbage Collector to clear RAM before the PyTorch engine boots up.
+        # OOM RESOLUTION: Pre-ML Memory Purge
         del pdf_bytes
         del full_text
         del safe_text_payload
@@ -95,10 +114,9 @@ def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, u
     except Exception as e:
         logger.error(f"Ingestion Core Pipeline Failure on {doc_id}: {str(e)}")
         
-        # 🚨 CRITICAL FIX 2: Rollback the broken database transaction first
+        # Rollback the broken database transaction first
         db.rollback() 
         
-        # Now we safely attempt to mark it as FAILED (if the document hasn't been deleted by the user)
         try:
             models_and_crud.update_document_status(db, doc_id, "FAILED")
         except Exception as inner_e:
