@@ -1,9 +1,3 @@
-import os
-
-# 🚀 CRITICAL FIX: Prevent PyTorch from locking up FastAPI's background threads
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 import threading
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -33,13 +27,11 @@ class EmbeddingEngine:
             with self._lock:
                 if self._model is None:
                     logger.info("Lazy Loading: Importing heavy ML libraries and bootstrapping weights...")
-                    logger.info("⏳ NOTE: If this is the first run, downloading the 90MB HuggingFace model. Please wait...")
                     
                     # 🚨 CRITICAL FIX: LAZY IMPORT 🚨
                     from sentence_transformers import SentenceTransformer
                     
                     self._model = SentenceTransformer('all-MiniLM-L6-v2')
-                    logger.info("✅ Vector Model loaded and cached successfully!")
         return self._model
 
     def generate_embedding(self, text: str) -> List[float]:
@@ -68,17 +60,19 @@ class VectorIndexer:
         if not chunks:
             return
 
-        texts = [chunk["content"] for chunk in chunks]
-        
-        # Fire the constrained Batch Inference
-        vector_embeddings = self.embedding_engine.generate_embeddings_batch(texts)
-        
-        # 🚀 BOOST BATCH SIZE: Reduce network round-trips to Supabase
-        DB_BATCH_SIZE = 50
+        # 🚨 CRITICAL FIX 2 (OOM RESOLUTION): Chunk BOTH the ML Inference AND the DB inserts together.
+        # Previously, the system generated vectors for the entire document at once, crashing the 512MB limit.
+        # Now, it only embeds and holds 15 chunks in RAM before flushing to the database.
+        DB_BATCH_SIZE = 15
         
         for i in range(0, len(chunks), DB_BATCH_SIZE):
             chunk_batch = chunks[i:i + DB_BATCH_SIZE]
-            emb_batch = vector_embeddings[i:i + DB_BATCH_SIZE]
+            
+            # Extract text for just this small batch
+            texts = [chunk["content"] for chunk in chunk_batch]
+            
+            # Fire the constrained Batch Inference strictly for these 15 items
+            emb_batch = self.embedding_engine.generate_embeddings_batch(texts)
             
             new_chunks = []
             for chunk, embedding in zip(chunk_batch, emb_batch):
@@ -94,7 +88,7 @@ class VectorIndexer:
             
             if new_chunks:
                 db.add_all(new_chunks)
-                db.commit()
+                db.commit() # Flush transaction and free memory
 
     def search(self, db: Session, query: str, patient_id: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """Executes a strict cosine distance vector evaluation search scoped cleanly behind active patient boundaries."""
