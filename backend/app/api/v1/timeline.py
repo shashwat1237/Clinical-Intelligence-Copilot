@@ -8,7 +8,7 @@ from app.schemas.patient_and_timeline import TimelineEventSchema
 
 router = APIRouter()
 
-@router.get("/", response_model=List[TimelineEventSchema])
+@router.get("", response_model=List[TimelineEventSchema])
 def get_timeline(user_id: str = Depends(get_current_user), db: Session = Depends(get_db)):
     """Timeline generation occurs during ingestion; this just retrieves it deterministically."""
     patient = models_and_crud.get_patient_by_user(db, user_id)
