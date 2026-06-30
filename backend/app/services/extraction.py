@@ -1,3 +1,4 @@
+import gc
 from sqlalchemy.orm import Session
 import fitz  # PyMuPDF
 
@@ -73,6 +74,16 @@ def process_document_workflow(doc_id: str, storage_path: str, patient_id: str, u
             })
 
         models_and_crud.update_document_status(db, doc_id, "INDEXING")
+
+        # 🚨 CRITICAL FIX 3 (OOM RESOLUTION): Pre-ML Memory Purge
+        # Explicitly delete massive binary and string variables, then force the Python 
+        # Garbage Collector to clear RAM before the PyTorch engine boots up.
+        del pdf_bytes
+        del full_text
+        del safe_text_payload
+        doc.close()
+        del doc
+        gc.collect()
 
         # Map vector space generation cleanly
         indexer = VectorIndexer()
