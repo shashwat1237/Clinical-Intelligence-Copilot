@@ -1,3 +1,9 @@
+import os
+
+# 🚀 CRITICAL FIX: Prevent PyTorch from locking up FastAPI's background threads
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import threading
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -27,11 +33,13 @@ class EmbeddingEngine:
             with self._lock:
                 if self._model is None:
                     logger.info("Lazy Loading: Importing heavy ML libraries and bootstrapping weights...")
+                    logger.info("⏳ NOTE: If this is the first run, downloading the 90MB HuggingFace model. Please wait...")
                     
                     # 🚨 CRITICAL FIX: LAZY IMPORT 🚨
                     from sentence_transformers import SentenceTransformer
                     
                     self._model = SentenceTransformer('all-MiniLM-L6-v2')
+                    logger.info("✅ Vector Model loaded and cached successfully!")
         return self._model
 
     def generate_embedding(self, text: str) -> List[float]:
@@ -65,8 +73,8 @@ class VectorIndexer:
         # Fire the constrained Batch Inference
         vector_embeddings = self.embedding_engine.generate_embeddings_batch(texts)
         
-        # 🚨 CRITICAL FIX 2: Chunk the SQLAlchemy inserts to prevent memory bloat during transactions
-        DB_BATCH_SIZE = 15
+        # 🚀 BOOST BATCH SIZE: Reduce network round-trips to Supabase
+        DB_BATCH_SIZE = 50
         
         for i in range(0, len(chunks), DB_BATCH_SIZE):
             chunk_batch = chunks[i:i + DB_BATCH_SIZE]
