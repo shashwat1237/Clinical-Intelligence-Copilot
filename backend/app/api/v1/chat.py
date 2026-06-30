@@ -37,7 +37,7 @@ def get_chat_history(user_id: str = Depends(get_current_user), db: Session = Dep
         } for msg in history
     ]
 
-@router.delete("/")
+@router.delete("")
 def clear_chat_history(user_id: str = Depends(get_current_user), db: Session = Depends(get_db)):
     patient = models_and_crud.get_patient_by_user(db, user_id)
     if not patient:
